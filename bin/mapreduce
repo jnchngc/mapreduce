@@ -1,0 +1,120 @@
+#!/bin/bash
+#
+# mapreduce start and stop
+#
+# starts and stops mapreduce server
+
+# Stop on errors, print commands
+set -Eeuo pipefail
+#set -x
+
+# TODO OH QUESTIONS 
+#   1. set -x or not
+#   2. Restart print all 4 lines always?
+#   3. redirect program output? For logging.info and logging.debug
+
+# prints usage message
+usage() {
+    echo "Usage: $0 (start|stop|restart|status)"
+}
+
+# args is not equal to one and not a valid call
+if [ $# -ne 1 ]; then
+    usage
+    exit 1
+fi
+
+start() {
+    if [[ $(pgrep -lf "mapreduce-master") ]]; then
+        echo "Error: mapreduce-master is already running"
+        exit 1
+    fi
+    if [[ $(pgrep -lf "mapreduce-worker") ]]; then
+        echo "Error: mapreduce-worker is already running"
+        exit 1
+    fi
+    echo "starting mapreduce ..."
+    mapreduce-master 6000 &
+    sleep 2
+    mapreduce-worker 6000 6001 &
+    mapreduce-worker 6000 6002 &
+}
+
+stop() {
+    # Detect GNU vs BSD netcat.  We need netcat to close the connection after
+    # sending a message, which requires different options.
+    set +o pipefail  # Avoid erroneous failures due to grep returning non-zero
+    if nc -h 2>&1 | grep -q "\-c"; then
+        NC="nc -c"
+    elif nc -h 2>&1 | grep -q "\-N"; then
+        NC="nc -N"
+    elif nc -h 2>&1 | grep -q "\-C"; then
+        NC="nc -C"
+    else
+        echo "Error detecting netcat version."
+        exit 1
+    fi
+    set -o pipefail
+
+    echo "stopping mapreduce ..."
+
+    echo '{"message_type": "shutdown"}' | $NC localhost 6000 || true
+    sleep 2  # give the master time to receive signal and send to workers
+
+    if [[ $(pgrep -lf "mapreduce-master") ]]; then
+        echo "killing mapreduce master ..."
+        pkill -f mapreduce-master || true
+    fi
+    if [[ $(pgrep -lf "mapreduce-worker") ]]; then
+        echo "killing mapreduce worker ..."
+        pkill -f mapreduce-worker || true
+    fi
+}
+
+restart() {
+    # Stop
+    echo "stopping mapreduce ..."
+    echo "killing mapreduce master ..."
+    pkill -f mapreduce-master || true
+    echo "killing mapreduce worker ..."
+    pkill -f mapreduce-worker || true
+    # Start
+    echo "starting mapreduce ..."
+    mapreduce-master 6000 &
+    sleep 2
+    mapreduce-worker 6000 6001 &
+    mapreduce-worker 6000 6002 &
+}
+
+status() {
+    if [[ $(pgrep -lf "mapreduce-master") ]]; then
+        echo "master running"
+    else
+        echo "master not running"
+    fi
+    if [[ $(pgrep -lf "mapreduce-worker") ]]; then
+        echo "workers running"
+    else 
+        echo "workers not running"
+    fi
+}
+
+# parse argument
+case $1 in
+    "start")
+        start
+        ;;
+    "stop")
+        stop
+        ;;
+    "restart")
+        restart
+		;;
+    "status")
+        status
+        ;;
+    *)
+	    usage
+	    exit 1
+	    ;;
+esac
